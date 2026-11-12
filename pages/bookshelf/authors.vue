@@ -33,6 +33,7 @@ export default {
       loading: true,
       authors: [],
       loadedLibraryId: null,
+      loadRequestId: 0,
       cardWidth: 200
     }
   },
@@ -66,48 +67,49 @@ export default {
   },
   methods: {
     async init() {
+      const requestId = ++this.loadRequestId
       this.cardWidth = (window.innerWidth - 64) / 2
       if (!this.currentLibraryId) {
+        this.authors = []
+        this.loading = false
+        this.$eventBus.$emit('bookshelf-total-entities', 0)
         return
       }
       this.loadedLibraryId = this.currentLibraryId
       this.loading = true
       const sort = this.authorSortBy
       const desc = this.authorSortDesc ? 1 : 0
-      this.authors = await this.$nativeHttp
+      const authors = await this.$nativeHttp
         .get(`/api/libraries/${this.currentLibraryId}/authors?sort=${encodeURIComponent(sort)}&desc=${desc}`)
         .then((response) => response.authors || response.results || [])
         .catch((error) => {
           console.error('Failed to load authors', error)
           return []
         })
+      if (requestId !== this.loadRequestId) return
+      this.authors = authors
       console.log('Loaded authors', this.authors)
       this.$eventBus.$emit('bookshelf-total-entities', this.authors.length)
       this.loading = false
     },
     authorAdded(author) {
-      if (!this.authors.some((au) => au.id === author.id)) {
-        this.authors.push(author)
-        this.$eventBus.$emit('bookshelf-total-entities', this.authors.length)
-      }
+      // Let the server place additions in the selected order, including book counts.
+      this.init()
     },
     authorUpdated(author) {
-      this.authors = this.authors.map((au) => {
-        if (au.id === author.id) {
-          return author
-        }
-        return au
-      })
+      this.init()
     },
     authorRemoved(author) {
       this.authors = this.authors.filter((au) => au.id !== author.id)
       this.$eventBus.$emit('bookshelf-total-entities', this.authors.length)
+      this.init()
     },
     libraryChanged(libraryId) {
       if (libraryId !== this.loadedLibraryId) {
         if (this.$store.getters['libraries/getCurrentLibraryMediaType'] === 'book') {
           this.init()
         } else {
+          this.loadRequestId++
           this.$router.replace('/bookshelf')
         }
       }
@@ -130,6 +132,7 @@ export default {
     this.$eventBus.$on('user-settings', this.settingsUpdated)
   },
   beforeDestroy() {
+    this.loadRequestId++
     this.$socket.$off('author_added', this.authorAdded)
     this.$socket.$off('author_updated', this.authorUpdated)
     this.$socket.$off('author_removed', this.authorRemoved)
